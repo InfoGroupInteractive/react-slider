@@ -42,6 +42,10 @@
     return x != null && x.length === 1 ? x[0] : x;
   }
 
+  var isArray = Array.isArray || function(x) {
+    return Object.prototype.toString.call(x) === '[object Array]';
+  };
+
   // undoEnsureArray(ensureArray(x)) === x
 
   var ReactSlider = createReactClass({
@@ -232,7 +236,7 @@
       // If an upperBound has not yet been determined (due to the component being hidden
       // during the mount event, or during the last resize), then calculate it now
       if (this.state.upperBound === 0) {
-        this._handleResize();
+        this._resize();
       }
     },
 
@@ -261,7 +265,7 @@
 
     componentDidMount: function () {
       window.addEventListener('resize', this._handleResize);
-      this._handleResize();
+      this._resize();
     },
 
     componentWillUnmount: function () {
@@ -273,27 +277,30 @@
       return undoEnsureArray(this.state.value);
     },
 
+    _resize: function () {
+      var slider = this.slider;
+      var handle = this.handle0;
+      var rect = slider.getBoundingClientRect();
+
+      var size = this._sizeKey();
+
+      var sliderMax = rect[this._posMaxKey()];
+      var sliderMin = rect[this._posMinKey()];
+
+      this.setState({
+        upperBound: slider[size] - handle[size],
+        sliderLength: Math.abs(sliderMax - sliderMin),
+        handleSize: handle[size],
+        sliderStart: this.props.invert ? sliderMax : sliderMin
+      });
+    },
+
     _handleResize: function () {
       // setTimeout of 0 gives element enough time to have assumed its new size if it is being resized
       var resizeTimeout = window.setTimeout(function() {
         // drop this timeout from pendingResizeTimeouts to reduce memory usage
         this.pendingResizeTimeouts.shift();
-
-        var slider = this.refs.slider;
-        var handle = this.refs.handle0;
-        var rect = slider.getBoundingClientRect();
-
-        var size = this._sizeKey();
-
-        var sliderMax = rect[this._posMaxKey()];
-        var sliderMin = rect[this._posMinKey()];
-
-        this.setState({
-          upperBound: slider[size] - handle[size],
-          sliderLength: Math.abs(sliderMax - sliderMin),
-          handleSize: handle[size],
-          sliderStart: this.props.invert ? sliderMax : sliderMin
-        });
+        this._resize();
       }.bind(this), 0);
 
       this.pendingResizeTimeouts.push(resizeTimeout);
@@ -471,7 +478,7 @@
 
     _start: function (i, position) {
       var activeEl = document.activeElement;
-      var handleRef = this.refs['handle' + i];
+      var handleRef = this['handle' + i];
       // if activeElement is body window will lost focus in IE9
       if (activeEl && activeEl != document.body && activeEl != handleRef) {
         activeEl.blur && activeEl.blur();
@@ -485,11 +492,13 @@
       zIndices.splice(zIndices.indexOf(i), 1); // remove wherever the element is
       zIndices.push(i); // add to end
 
-      this.setState({
-        startValue: this.state.value[i],
-        startPosition: position,
-        index: i,
-        zIndices: zIndices
+      this.setState(function (prevState) {
+        return {
+          startValue: this.state.value[i],
+          startPosition: position !== undefined ? position : prevState.startPosition,
+          index: i,
+          zIndices: zIndices
+        };
       });
     },
 
@@ -546,9 +555,11 @@
       switch (e.key) {
         case "ArrowLeft":
         case "ArrowUp":
+          e.preventDefault();
           return this._moveDownOneStep();
         case "ArrowRight":
         case "ArrowDown":
+          e.preventDefault();
           return this._moveUpOneStep();
         case "Home":
           return this._move(this.props.min);
@@ -727,13 +738,16 @@
     },
 
     _renderHandle: function (style, child, i) {
+      var self = this;
       var className = this.props.handleClassName + ' ' +
         (this.props.handleClassName + '-' + i) + ' ' +
         (this.state.index === i ? this.props.handleActiveClassName : '');
 
       return (
         React.createElement('div', {
-            ref: 'handle' + i,
+            ref: function (r) {
+              self['handle' + i] = r;
+            },
             key: 'handle' + i,
             className: className,
             style: style,
@@ -745,6 +759,8 @@
             "aria-valuenow": this.state.value[i],
             "aria-valuemin": this.props.min,
             "aria-valuemax": this.props.max,
+            "aria-label": isArray(this.props.ariaLabel) ? this.props.ariaLabel[i] : this.props.ariaLabel,
+            "aria-valuetext": this.props.ariaValuetext,
           },
           child
         )
@@ -759,7 +775,7 @@
         styles[i] = this._buildHandleStyle(offset[i], i);
       }
 
-      var res = this.tempArray;
+      var res = [];
       var renderHandle = this._renderHandle;
       if (React.Children.count(this.props.children) > 0) {
         React.Children.forEach(this.props.children, function (child, i) {
@@ -774,10 +790,13 @@
     },
 
     _renderBar: function (i, offsetFrom, offsetTo) {
+      var self = this;
       return (
         React.createElement('div', {
           key: 'bar' + i,
-          ref: 'bar' + i,
+          ref: function (r) {
+            self['bar' + i] = r;
+          },
           className: this.props.barClassName + ' ' + this.props.barClassName + '-' + i,
           style: this._buildBarStyle(offsetFrom, this.state.upperBound - offsetTo)
         })
@@ -805,8 +824,8 @@
       if (!this.props.snapDragDisabled) {
         var position = this._getMousePosition(e);
         this._forceValueFromPosition(position[0], function (i) {
-          this._fireChangeEvent('onChange');
           this._start(i, position[0]);
+          this._fireChangeEvent('onChange');
           this._addHandlers(this._getMouseEventMap());
         }.bind(this));
       }
@@ -831,6 +850,7 @@
     },
 
     render: function () {
+      var self = this;
       var state = this.state;
       var props = this.props;
 
@@ -846,7 +866,9 @@
 
       return (
         React.createElement('div', {
-            ref: 'slider',
+            ref: function (r) {
+              self.slider = r;
+            },
             style: {position: 'relative'},
             className: props.className + (props.disabled ? ' disabled' : ''),
             onMouseDown: this._onSliderMouseDown,
